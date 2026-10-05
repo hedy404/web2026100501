@@ -127,9 +127,7 @@
 
   function renderBoard(popIndex) {
     var reveal = game.won;
-    var values = reveal
-      ? game.answer
-      : game.slots.map(function (slot) { return slot ? slot.char : null; });
+    var values = reveal ? game.answer : game.slots;
 
     dom.board.innerHTML = '';
 
@@ -138,50 +136,56 @@
       cell.className = 'slot';
       cell.setAttribute('role', 'listitem');
 
-      if (values[i]) {
-        var locked = !reveal && game.isLocked(i);
+      var char = values[i] || null;
+      var locked = !reveal && game.isLocked(i);
+
+      if (char) {
         cell.classList.add('filled');
-        cell.textContent = values[i];
-
-        if (reveal) {
-          cell.classList.add('solved', 'wave');
-          cell.style.animationDelay = (i * 0.06).toFixed(2) + 's';
-          cell.title = Pool.nameOf(values[i]);
-        } else {
-          cell.classList.add('clickable');
-          cell.tabIndex = 0;
-          cell.setAttribute('aria-pressed', locked ? 'true' : 'false');
-
-          if (locked) {
-            cell.classList.add('locked');
-            cell.title = '第 ' + (i + 1) + ' 位 ' + Pool.nameOf(values[i]) + ' · 已锁定（点击解锁）';
-            cell.setAttribute('aria-label', '第 ' + (i + 1) + ' 位 ' + Pool.nameOf(values[i]) + '，已锁定，按回车解锁');
-            var lockMark = document.createElement('span');
-            lockMark.className = 'slot-lock';
-            lockMark.setAttribute('aria-hidden', 'true');
-            lockMark.textContent = '🔒';
-            cell.appendChild(lockMark);
-          } else {
-            cell.title = '第 ' + (i + 1) + ' 位 ' + Pool.nameOf(values[i]) + '（点击锁定）';
-            cell.setAttribute('aria-label', '第 ' + (i + 1) + ' 位 ' + Pool.nameOf(values[i]) + '，未锁定，按回车锁定');
-          }
-
-          (function (index) {
-            var toggle = function () { toggleLockAt(index); };
-            cell.addEventListener('click', toggle);
-            cell.addEventListener('keydown', function (event) {
-              if (event.key === 'Enter' || event.key === ' ') {
-                event.preventDefault();
-                toggle();
-              }
-            });
-          })(i);
-        }
-        if (popIndex === i) cell.classList.add('pop');
+        cell.textContent = char;
       } else {
         cell.classList.add('empty');
         cell.textContent = String(i + 1);
       }
+
+      if (reveal) {
+        cell.classList.add('solved', 'wave');
+        cell.style.animationDelay = (i * 0.06).toFixed(2) + 's';
+        if (char) cell.title = Pool.nameOf(char);
+      } else {
+        // 空位也能锁定：锁的是位置，填入的 emoji 会继承这个位置上的锁定
+        var label = '第 ' + (i + 1) + ' 位 ' + (char ? Pool.nameOf(char) : '空位');
+
+        cell.classList.add('clickable');
+        cell.tabIndex = 0;
+        cell.setAttribute('aria-pressed', locked ? 'true' : 'false');
+
+        if (locked) {
+          cell.classList.add('locked');
+          cell.title = label + ' · 已锁定（点击解锁）';
+          cell.setAttribute('aria-label', label + '，已锁定，按回车解锁');
+          var lockMark = document.createElement('span');
+          lockMark.className = 'slot-lock';
+          lockMark.setAttribute('aria-hidden', 'true');
+          lockMark.textContent = '🔒';
+          cell.appendChild(lockMark);
+        } else {
+          cell.title = label + '（点击锁定）';
+          cell.setAttribute('aria-label', label + '，未锁定，按回车锁定');
+        }
+
+        (function (index) {
+          var toggle = function () { toggleLockAt(index); };
+          cell.addEventListener('click', toggle);
+          cell.addEventListener('keydown', function (event) {
+            if (event.key === 'Enter' || event.key === ' ') {
+              event.preventDefault();
+              toggle();
+            }
+          });
+        })(i);
+      }
+
+      if (popIndex === i) cell.classList.add('pop');
       dom.board.appendChild(cell);
     }
   }
@@ -326,9 +330,9 @@
     }
 
     if (game.size <= 6) {
-      hint = '点一下加入，点已选槽位可以 🔒 锁定';
+      hint = '点一下加入，点槽位可以 🔒 锁定';
     } else {
-      hint = '要选 ' + game.size + ' 个：点一下加入，点已选槽位可以 🔒 锁定';
+      hint = '要选 ' + game.size + ' 个：点一下加入，点槽位可以 🔒 锁定';
     }
 
     dom.modeTip.textContent = text;
@@ -384,7 +388,7 @@
     maybeAutoSubmit();
   }
 
-  /** 点槽位 = 锁定 / 解锁（锁定的位置不会被撤销、清除、判定清掉） */
+  /** 点槽位 = 锁定 / 解锁（空位也能锁，锁的是位置） */
   function toggleLockAt(index) {
     cancelAutoSubmit();
     var result = game.toggleLock(index);
@@ -394,12 +398,13 @@
     renderHud();
     updatePool();
 
-    var slot = game.slots[index];
+    var char = game.slots[index];
     if (result === 'locked') {
-      toast('🔒 已锁定第 ' + (index + 1) + ' 位：' + Pool.nameOf(slot.char) +
-        '（撤销、清除、判定都不会动它）');
+      toast(char
+        ? '🔒 已锁定第 ' + (index + 1) + ' 位：' + Pool.nameOf(char) + '（撤销、清除、判定都不会动它）'
+        : '🔒 已锁定第 ' + (index + 1) + ' 位（空位）：之后填进去的 emoji 同样不会被撤销或清除');
     } else {
-      toast('已解锁第 ' + (index + 1) + ' 位：' + Pool.nameOf(slot.char));
+      toast('已解锁第 ' + (index + 1) + ' 位' + (char ? '：' + Pool.nameOf(char) : ''));
     }
   }
 
@@ -409,7 +414,7 @@
       renderBoard();
       renderHud();
       updatePool();
-    } else if (game.lockedCount() > 0) {
+    } else if (game.lockedFilledCount() > 0) {
       toast('🔒 锁定的 emoji 不会被撤销，点槽位可以解锁');
     } else {
       toast('还没有可以撤销的 emoji');
@@ -418,16 +423,18 @@
 
   function clearSelection() {
     cancelAutoSubmit();
-    var locked = game.lockedCount();
+    var kept = game.lockedFilledCount();
     if (game.clearSelection()) {
       renderBoard();
       renderHud();
       updatePool();
-      toast(locked > 0
-        ? '已清除未锁定的 emoji，保留 ' + locked + ' 个锁定项 🔒'
+      toast(kept > 0
+        ? '已清除未锁定的 emoji，保留了 ' + kept + ' 个锁定中的 emoji 🔒'
         : '已清除全部已选 emoji');
-    } else if (locked > 0) {
+    } else if (kept > 0) {
       toast('🔒 锁定的 emoji 不会被清除，点槽位可以解锁');
+    } else if (game.lockedCount() > 0) {
+      toast('目前只有锁定的空位，没有可以清除的 emoji');
     } else {
       toast('当前没有已选的 emoji');
     }

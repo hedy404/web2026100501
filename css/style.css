@@ -253,12 +253,17 @@ button.warn:hover:not(:disabled) { background: rgba(255, 107, 129, 0.22); }
   cursor: pointer;
 }
 .slot.filled:hover { transform: translateY(-3px) scale(1.04); border-color: var(--near); }
+.slot.clickable:hover { border-color: #ffe9a8; }
 .slot.locked {
   border-color: #ffd166;
-  background: linear-gradient(160deg, rgba(255, 209, 102, 0.28), rgba(255, 209, 102, 0.1));
   box-shadow: 0 0 0 3px rgba(255, 209, 102, 0.14), 0 8px 18px rgba(0, 0, 0, 0.35);
 }
-.slot.locked:hover { border-color: #ffe9a8; }
+.slot.filled.locked { background: linear-gradient(160deg, rgba(255, 209, 102, 0.3), rgba(255, 209, 102, 0.12)); }
+.slot.empty.locked {
+  border-style: dashed;
+  background: rgba(255, 209, 102, 0.08);
+  color: #ffd166;
+}
 .slot-lock {
   position: absolute;
   top: -7px;

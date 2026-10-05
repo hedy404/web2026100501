@@ -60,7 +60,7 @@
       <!-- 候选栏 -->
       <div class="pool-header">
         <h2>待选栏</h2>
-        <span class="hint" id="poolHint">点一下加入，点已选槽位可以 🔒 锁定</span>
+        <span class="hint" id="poolHint">点一下加入，点槽位可以 🔒 锁定</span>
       </div>
       <div class="pool" id="pool" role="group" aria-label="候选 emoji 列表"></div>
 
@@ -71,7 +71,7 @@
           <li>每局会从 emoji 池里随机抽出 <b>候选栏数量</b> 个 emoji，谜底再由这些候选随机生成，所以每局都不一样。</li>
           <li>默认 <b>候选栏数量 = 谜面长度</b> 且 <b>不允许重复</b>：每个 emoji 恰好用一次，把顺序排对即可。</li>
           <li>选中 <b>谜面长度</b> 个 emoji 后点「判定」（勾选了「选满自动判定」则选满即判）。</li>
-          <li><b>🔒 锁定</b>：点一下已经填好的槽位，就把它钉在当前位置。锁定的 emoji <b>撤销、清除、判定失败都不会动它</b>，再点一次解锁；新开一局自动全部解锁。</li>
+          <li><b>🔒 锁定</b>：点一下槽位（<b>空位也可以</b>）就把它钉在这个位置。锁定位置上填好的 emoji <b>撤销、清除、判定失败都不会动它</b>，再点一次解锁；新开一局自动全部解锁。</li>
           <li>每次判定给出两个数字：
             <span class="tag exact">✅ 命中</span> 位置和 emoji 都对；
             <span class="tag near">🔄 错位</span> emoji 存在于谜底但位置不对。
