@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f1220">
+<meta name="color-scheme" content="dark">
+<meta name="description" content="Emoji 猜猜看：在候选栏里排出正确的 emoji 顺序，用命中/错位提示推理出谜底。">
+<title>🎯 Emoji 猜猜看</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div class="app">
+
+  <header class="topbar">
+    <h1><span class="logo">🎯</span> Emoji 猜猜看</h1>
+    <p class="subtitle">把候选栏里的 emoji 摆成和谜底一样的顺序，位置也要对！</p>
+  </header>
+
+  <main class="layout">
+
+    <!-- ============ 游戏区 ============ -->
+    <section class="panel game-panel">
+
+      <!-- 设置 -->
+      <div class="settings">
+        <div class="setting">
+          <label class="setting-label" for="sizeInput">谜面长度</label>
+          <div class="stepper">
+            <button type="button" id="sizeMinus" aria-label="谜面长度减一">−</button>
+            <input id="sizeInput" type="number" min="3" max="20" step="1" value="6"
+                   inputmode="numeric" aria-describedby="sizeHint">
+            <button type="button" id="sizePlus" aria-label="谜面长度加一">+</button>
+          </div>
+          <span id="sizeHint" class="hint">3 ~ 20</span>
+        </div>
+
+        <div class="setting">
+          <label class="setting-label" for="candInput">候选栏数量</label>
+          <div class="stepper" id="candStepper">
+            <button type="button" id="candMinus" aria-label="候选栏数量减一">−</button>
+            <input id="candInput" type="number" min="3" max="24" step="1" value="6" inputmode="numeric">
+            <button type="button" id="candPlus" aria-label="候选栏数量加一">+</button>
+          </div>
+          <label class="switch mini" title="候选栏数量始终等于谜面长度">
+            <input type="checkbox" id="followToggle" checked>
+            <span>跟随谜面</span>
+          </label>
+        </div>
+
+        <div class="setting toggles">
+          <label class="switch" title="谜底里是否允许出现相同的 emoji">
+            <input type="checkbox" id="dupToggle">
+            <span>允许重复</span>
+          </label>
+          <label class="switch" title="选满之后是否立即自动判定">
+            <input type="checkbox" id="autoToggle" checked>
+            <span>选满自动判定</span>
+          </label>
+        </div>
+
+        <div class="setting buttons-group">
+          <button type="button" id="applySizeBtn">应用设置</button>
+          <button type="button" id="newGameBtn" class="primary">新游戏</button>
+        </div>
+      </div>
+
+      <!-- 状态条 -->
+      <div class="hud">
+        <span class="hud-item">猜测 <b id="attemptCount">0</b> 次</span>
+        <span class="hud-item">用时 <b id="timer">00:00</b></span>
+        <span class="hud-item">已选 <b id="selCount">0</b> / <b id="sizeLabel">6</b></span>
+      </div>
+
+      <p class="mode-tip" id="modeTip" hidden></p>
+
+      <!-- 槽位 -->
+      <div class="board-wrap">
+        <div class="board" id="board" role="list" aria-label="你的猜测，可点击单个格子移除"></div>
+      </div>
+
+      <!-- 操作 -->
+      <div class="actions">
+        <button type="button" id="undoBtn">↩︎ 撤销</button>
+        <button type="button" id="clearBtn" class="warn">🧹 清除已选</button>
+        <button type="button" id="submitBtn" class="primary">判定</button>
+      </div>
+
+      <!-- 候选栏 -->
+      <div class="pool-header">
+        <h2>待选栏</h2>
+        <span class="hint" id="poolHint">点一下加入，点格子里的可以移除</span>
+      </div>
+      <div class="pool" id="pool" role="group" aria-label="候选 emoji 列表"></div>
+
+      <!-- 规则 -->
+      <details class="rules">
+        <summary>游戏规则 / 判定说明</summary>
+        <ul>
+          <li>每局会从 emoji 池里随机抽出 <b>候选栏数量</b> 个 emoji，谜底再由这些候选随机生成，所以每局都不一样。</li>
+          <li>默认 <b>候选栏数量 = 谜面长度</b> 且 <b>不允许重复</b>：每个 emoji 恰好用一次，把顺序排对即可。</li>
+          <li>选中 <b>谜面长度</b> 个 emoji 后点「判定」（勾选了「选满自动判定」则选满即判）。</li>
+          <li>每次判定给出两个数字：
+            <span class="tag exact">✅ 命中</span> 位置和 emoji 都对；
+            <span class="tag near">🔄 错位</span> emoji 存在于谜底但位置不对。
+          </li>
+          <li>记录框会保存你尝试过的所有组合，用来推理下一手。</li>
+          <li>难度不同（长度 / 候选数量 / 是否重复）会分别记录最佳成绩。</li>
+          <li>快捷键：<kbd>Backspace</kbd> 撤销、<kbd>Enter</kbd> 判定、<kbd>Esc</kbd> 清空。</li>
+        </ul>
+      </details>
+    </section>
+
+    <!-- ============ 记录区 ============ -->
+    <aside class="panel record-panel">
+      <div class="record-head">
+        <h2>📋 记录框</h2>
+        <button type="button" id="clearRecordsBtn" class="link-btn" title="只清空记录框，不影响谜底">清空记录</button>
+      </div>
+      <div class="record-columns">
+        <span>#</span><span>组合</span><span>命中</span><span>错位</span>
+      </div>
+      <ol class="records" id="records">
+        <li class="records-empty">还没有记录，先选中 emoji 试试看吧～</li>
+      </ol>
+    </aside>
+
+  </main>
+
+  <footer class="footer">
+    <span>想换难度？改设置后点「应用设置」或「新游戏」。</span>
+  </footer>
+</div>
+
+<!-- 胜利彩带 -->
+<div class="confetti-layer" id="confetti" aria-hidden="true"></div>
+
+<!-- ============ 记分牌 ============ -->
+<div class="modal" id="scoreboard" hidden>
+  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="scoreTitle">
+    <div class="modal-glow" aria-hidden="true"></div>
+    <h2 id="scoreTitle">🏆 记分牌</h2>
+    <p class="medal" id="scoreMedal">不错！</p>
+
+    <div class="answer-reveal">
+      <span class="label">谜底</span>
+      <div class="answer-emojis" id="scoreAnswer"></div>
+    </div>
+
+    <div class="score-grid">
+      <div class="score-cell"><span class="k">猜测次数</span><b id="scoreAttempts">0</b></div>
+      <div class="score-cell"><span class="k">用时</span><b id="scoreTime">00:00</b></div>
+      <div class="score-cell"><span class="k">难度</span><b id="scoreDifficulty">6 位</b></div>
+      <div class="score-cell"><span class="k">最佳成绩</span><b id="scoreBest">—</b></div>
+    </div>
+
+    <div class="score-history-wrap">
+      <h3>本局全部尝试</h3>
+      <ol class="score-history" id="scoreHistory"></ol>
+    </div>
+
+    <div class="modal-actions">
+      <button type="button" id="copyResultBtn">📋 复制战绩</button>
+      <button type="button" id="closeScoreBtn">关闭</button>
+      <button type="button" id="playAgainBtn" class="primary">再来一局</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+
+<script src="js/emoji-pool.js"></script>
+<script src="js/game-core.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
