@@ -6,6 +6,11 @@
  *   2. 再从这个候选栏里生成定长谜底（默认不允许重复）；
  * 因此每局的 emoji 集合和谜底都是随机的。
  *
+ * 槽位（slots）：
+ *   slots 是长度等于谜面长度的数组，每项为 null（空）或 { char, locked }。
+ *   锁定的槽位是「钉住」的：撤销、清空、提交判定都不会动它，
+ *   只有新开一局或玩家主动解锁才会消失。
+ *
  * 判定规则（Mastermind 式）：
  *   - 命中(exact)      ：位置和 emoji 都正确
  *   - 错位(misplaced)  ：emoji 在谜底里存在，但放错了位置
@@ -136,7 +141,7 @@
     this.reset();
   }
 
-  /** 开一局新的：重抽候选栏 + 重掷谜底 + 清空进度 */
+  /** 开一局新的：重抽候选栏 + 重掷谜底 + 清空所有槽位（锁定一并解除） */
   Game.prototype.reset = function (overrides) {
     if (overrides) {
       if (overrides.size !== undefined) this.size = clampSize(overrides.size);
@@ -153,67 +158,163 @@
     this.candidates = pickCandidates(this.pool, this.candidateCount, this.rng);
     this.answer = makeAnswer(this.candidates, this.size, this.allowDuplicates, this.rng);
 
-    this.selection = [];
+    this.slots = [];
+    for (var i = 0; i < this.size; i++) this.slots.push(null);
+
     this.guesses = [];
     this.attempts = 0;
     this.startedAt = Date.now();
     this.finishedAt = null;
     this.won = false;
+    // 刚刚提交过、槽位还没被改动过：用于挡住「选满自动判定」的重复触发
+    this.awaitingChange = false;
     return this;
   };
 
+  /* ---------------- 槽位查询 ---------------- */
+
+  /** 第一个空槽位的下标，全满时返回 -1 */
+  Game.prototype.firstEmptyIndex = function () {
+    for (var i = 0; i < this.slots.length; i++) {
+      if (!this.slots[i]) return i;
+    }
+    return -1;
+  };
+
   Game.prototype.isFull = function () {
-    return this.selection.length >= this.size;
+    return this.firstEmptyIndex() === -1;
   };
 
   Game.prototype.isFinished = function () {
     return this.won;
   };
 
-  /** 当前已选里某个 emoji 出现的次数 */
-  Game.prototype.countSelected = function (char) {
-    var count = 0;
-    for (var i = 0; i < this.selection.length; i++) {
-      if (this.selection[i] === char) count++;
+  /** 已填数量（含锁定） */
+  Game.prototype.filledCount = function () {
+    var n = 0;
+    for (var i = 0; i < this.slots.length; i++) {
+      if (this.slots[i]) n++;
     }
-    return count;
+    return n;
   };
 
+  /** 已锁定数量 */
+  Game.prototype.lockedCount = function () {
+    var n = 0;
+    for (var i = 0; i < this.slots.length; i++) {
+      if (this.slots[i] && this.slots[i].locked) n++;
+    }
+    return n;
+  };
+
+  /** 是否存在可以撤销 / 清除的槽位（非空且未锁定） */
+  Game.prototype.hasRemovable = function () {
+    for (var i = 0; i < this.slots.length; i++) {
+      var slot = this.slots[i];
+      if (slot && !slot.locked) return true;
+    }
+    return false;
+  };
+
+  /** 按槽位顺序取出已填的 emoji（忽略空洞） */
+  Game.prototype.values = function () {
+    var out = [];
+    for (var i = 0; i < this.slots.length; i++) {
+      if (this.slots[i]) out.push(this.slots[i].char);
+    }
+    return out;
+  };
+
+  /** 某个 emoji 在槽位里出现的次数 */
+  Game.prototype.countSelected = function (char) {
+    var n = 0;
+    for (var i = 0; i < this.slots.length; i++) {
+      if (this.slots[i] && this.slots[i].char === char) n++;
+    }
+    return n;
+  };
+
+  Game.prototype.isLocked = function (index) {
+    var slot = this.slots[index];
+    return !!(slot && slot.locked);
+  };
+
+  /* ---------------- 操作 ---------------- */
+
   /**
-   * 选择一个 emoji。
-   * @returns {{ok:boolean, reason?:string}}
+   * 选一个 emoji，放进第一个空槽位。
+   * @returns {{ok:boolean, reason?:string, index?:number}}
    */
   Game.prototype.pick = function (char) {
     if (this.won) return { ok: false, reason: 'finished' };
-    if (this.isFull()) return { ok: false, reason: 'full' };
+
+    var index = this.firstEmptyIndex();
+    if (index === -1) return { ok: false, reason: 'full' };
     if (this.candidates.indexOf(char) === -1) return { ok: false, reason: 'unknown' };
     if (!this.allowDuplicates && this.countSelected(char) > 0) {
       return { ok: false, reason: 'duplicate' };
     }
-    this.selection.push(char);
-    return { ok: true };
+
+    this.slots[index] = { char: char, locked: false };
+    this.awaitingChange = false;
+    return { ok: true, index: index };
   };
 
+  /** 移除指定槽位；锁定的槽位移不动 */
   Game.prototype.removeAt = function (index) {
     if (this.won) return false;
-    if (index < 0 || index >= this.selection.length) return false;
-    this.selection.splice(index, 1);
+    if (index < 0 || index >= this.slots.length) return false;
+    var slot = this.slots[index];
+    if (!slot || slot.locked) return false;
+    this.slots[index] = null;
+    this.awaitingChange = false;
     return true;
   };
 
+  /** 从后往前移除最后一个「未锁定」的 emoji */
   Game.prototype.undo = function () {
     if (this.won) return false;
-    return this.removeAt(this.selection.length - 1);
+    for (var i = this.slots.length - 1; i >= 0; i--) {
+      var slot = this.slots[i];
+      if (slot && !slot.locked) {
+        this.slots[i] = null;
+        this.awaitingChange = false;
+        return true;
+      }
+    }
+    return false;
   };
 
+  /** 清空所有「未锁定」的 emoji，锁定的原样保留 */
   Game.prototype.clearSelection = function () {
     if (this.won) return false;
-    var had = this.selection.length > 0;
-    this.selection = [];
-    return had;
+    var changed = false;
+    for (var i = 0; i < this.slots.length; i++) {
+      var slot = this.slots[i];
+      if (slot && !slot.locked) {
+        this.slots[i] = null;
+        changed = true;
+      }
+    }
+    if (changed) this.awaitingChange = false;
+    return changed;
   };
 
-  /** 只清空记录框里的历史组合，不影响猜测次数与谜底 */
+  /**
+   * 切换槽位的锁定状态。
+   * @returns {?string} 'locked' | 'unlocked' | null（空槽或本局已结束时返回 null）
+   */
+  Game.prototype.toggleLock = function (index) {
+    if (this.won) return null;
+    if (index < 0 || index >= this.slots.length) return null;
+    var slot = this.slots[index];
+    if (!slot) return null;
+    slot.locked = !slot.locked;
+    this.awaitingChange = false;
+    return slot.locked ? 'locked' : 'unlocked';
+  };
+
+  /** 只清空记录框里的历史组合，不影响猜测次数、谜底与槽位 */
   Game.prototype.clearHistory = function () {
     var had = this.guesses.length > 0;
     this.guesses = [];
@@ -221,26 +322,48 @@
   };
 
   /**
-   * 提交当前选择。
-   * @returns {?object} 记录对象；选择未满时返回 null
+   * 提交当前槽位（必须填满才允许）。
+   * 判定后清掉所有未锁定的槽位，锁定的按原序号保留下来。
+   * @returns {?object} 记录对象；未填满时返回 null
    */
   Game.prototype.submit = function () {
     if (this.won || !this.isFull()) return null;
-    var result = evaluateGuess(this.selection, this.answer);
+
+    var values = this.values();
+    var result = evaluateGuess(values, this.answer);
     this.attempts++;
+
     var record = {
       index: this.attempts,
-      emojis: this.selection.slice(),
+      emojis: values,
       exact: result.exact,
       misplaced: result.misplaced
     };
     this.guesses.push(record);
-    this.selection = [];
+
+    var kept = 0;
+    for (var i = 0; i < this.slots.length; i++) {
+      var slot = this.slots[i];
+      if (!slot) continue;
+      if (slot.locked) {
+        kept++;
+      } else {
+        this.slots[i] = null;
+      }
+    }
+    record.keptLocked = kept;
+    this.awaitingChange = true;
+
     if (record.exact === this.size) {
       this.won = true;
       this.finishedAt = Date.now();
     }
     return record;
+  };
+
+  /** 是否处于「可以立即自动判定」的状态（刚提交过就不算） */
+  Game.prototype.canAutoSubmit = function () {
+    return this.isFull() && !this.awaitingChange;
   };
 
   /** 本局统计信息（用于记分牌） */

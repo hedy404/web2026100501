@@ -22,46 +22,16 @@
     <!-- ============ 游戏区 ============ -->
     <section class="panel game-panel">
 
-      <!-- 设置 -->
-      <div class="settings">
-        <div class="setting">
-          <label class="setting-label" for="sizeInput">谜面长度</label>
-          <div class="stepper">
-            <button type="button" id="sizeMinus" aria-label="谜面长度减一">−</button>
-            <input id="sizeInput" type="number" min="3" max="20" step="1" value="6"
-                   inputmode="numeric" aria-describedby="sizeHint">
-            <button type="button" id="sizePlus" aria-label="谜面长度加一">+</button>
-          </div>
-          <span id="sizeHint" class="hint">3 ~ 20</span>
-        </div>
-
-        <div class="setting">
-          <label class="setting-label" for="candInput">候选栏数量</label>
-          <div class="stepper" id="candStepper">
-            <button type="button" id="candMinus" aria-label="候选栏数量减一">−</button>
-            <input id="candInput" type="number" min="3" max="24" step="1" value="6" inputmode="numeric">
-            <button type="button" id="candPlus" aria-label="候选栏数量加一">+</button>
-          </div>
-          <label class="switch mini" title="候选栏数量始终等于谜面长度">
-            <input type="checkbox" id="followToggle" checked>
-            <span>跟随谜面</span>
-          </label>
-        </div>
-
-        <div class="setting toggles">
-          <label class="switch" title="谜底里是否允许出现相同的 emoji">
-            <input type="checkbox" id="dupToggle">
-            <span>允许重复</span>
-          </label>
-          <label class="switch" title="选满之后是否立即自动判定">
-            <input type="checkbox" id="autoToggle" checked>
-            <span>选满自动判定</span>
-          </label>
-        </div>
-
-        <div class="setting buttons-group">
-          <button type="button" id="applySizeBtn">应用设置</button>
-          <button type="button" id="newGameBtn" class="primary">新游戏</button>
+      <!-- 工具条：当前难度 + 设置入口 + 新游戏 -->
+      <div class="toolbar">
+        <button type="button" class="chip" id="difficultyChip" title="点击打开设置">
+          <span class="chip-icon" aria-hidden="true">🎯</span>
+          <span id="difficultyText">6 位 · 6 候选 · 不重复</span>
+          <span class="chip-edit">修改</span>
+        </button>
+        <div class="toolbar-actions">
+          <button type="button" id="settingsOpenBtn">⚙️ 设置</button>
+          <button type="button" id="newGameBtn" class="primary">🎮 新游戏</button>
         </div>
       </div>
 
@@ -70,6 +40,7 @@
         <span class="hud-item">猜测 <b id="attemptCount">0</b> 次</span>
         <span class="hud-item">用时 <b id="timer">00:00</b></span>
         <span class="hud-item">已选 <b id="selCount">0</b> / <b id="sizeLabel">6</b></span>
+        <span class="hud-item lock-item" id="lockItem" hidden>🔒 锁定 <b id="lockCount">0</b></span>
       </div>
 
       <p class="mode-tip" id="modeTip" hidden></p>
@@ -89,7 +60,7 @@
       <!-- 候选栏 -->
       <div class="pool-header">
         <h2>待选栏</h2>
-        <span class="hint" id="poolHint">点一下加入，点格子里的可以移除</span>
+        <span class="hint" id="poolHint">点一下加入，点已选槽位可以 🔒 锁定</span>
       </div>
       <div class="pool" id="pool" role="group" aria-label="候选 emoji 列表"></div>
 
@@ -100,12 +71,13 @@
           <li>每局会从 emoji 池里随机抽出 <b>候选栏数量</b> 个 emoji，谜底再由这些候选随机生成，所以每局都不一样。</li>
           <li>默认 <b>候选栏数量 = 谜面长度</b> 且 <b>不允许重复</b>：每个 emoji 恰好用一次，把顺序排对即可。</li>
           <li>选中 <b>谜面长度</b> 个 emoji 后点「判定」（勾选了「选满自动判定」则选满即判）。</li>
+          <li><b>🔒 锁定</b>：点一下已经填好的槽位，就把它钉在当前位置。锁定的 emoji <b>撤销、清除、判定失败都不会动它</b>，再点一次解锁；新开一局自动全部解锁。</li>
           <li>每次判定给出两个数字：
             <span class="tag exact">✅ 命中</span> 位置和 emoji 都对；
             <span class="tag near">🔄 错位</span> emoji 存在于谜底但位置不对。
           </li>
           <li>记录框会保存你尝试过的所有组合，用来推理下一手。</li>
-          <li>难度不同（长度 / 候选数量 / 是否重复）会分别记录最佳成绩。</li>
+          <li>难度（长度 / 候选数量 / 是否重复）在「⚙️ 设置」里调整，不同难度分别记录最佳成绩。</li>
           <li>快捷键：<kbd>Backspace</kbd> 撤销、<kbd>Enter</kbd> 判定、<kbd>Esc</kbd> 清空。</li>
         </ul>
       </details>
@@ -128,12 +100,83 @@
   </main>
 
   <footer class="footer">
-    <span>想换难度？改设置后点「应用设置」或「新游戏」。</span>
+    <span>换难度点左上角的难度标签或「⚙️ 设置」，「🎮 新游戏」只重掷谜底。</span>
   </footer>
 </div>
 
 <!-- 胜利彩带 -->
 <div class="confetti-layer" id="confetti" aria-hidden="true"></div>
+
+<!-- ============ 设置 ============ -->
+<div class="modal" id="settingsModal" hidden>
+  <div class="modal-card settings-card" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+    <h2 id="settingsTitle">⚙️ 设置</h2>
+    <p class="modal-sub">改动会在点「应用并重开」后生效，并重新随机一局。</p>
+
+    <div class="settings-body">
+      <div class="field">
+        <div class="field-main">
+          <span class="field-label">谜面长度</span>
+          <span class="field-hint">3 ~ 20，谜底有几个 emoji</span>
+        </div>
+        <div class="stepper">
+          <button type="button" id="sizeMinus" aria-label="谜面长度减一">−</button>
+          <input id="sizeInput" type="number" min="3" max="20" step="1" value="6" inputmode="numeric">
+          <button type="button" id="sizePlus" aria-label="谜面长度加一">+</button>
+        </div>
+      </div>
+
+      <div class="field">
+        <div class="field-main">
+          <span class="field-label">候选栏数量</span>
+          <span class="field-hint">3 ~ 24，待选栏给几个 emoji</span>
+        </div>
+        <div class="stepper" id="candStepper">
+          <button type="button" id="candMinus" aria-label="候选栏数量减一">−</button>
+          <input id="candInput" type="number" min="3" max="24" step="1" value="6" inputmode="numeric">
+          <button type="button" id="candPlus" aria-label="候选栏数量加一">+</button>
+        </div>
+      </div>
+
+      <div class="field">
+        <div class="field-main">
+          <span class="field-label">跟随谜面长度</span>
+          <span class="field-hint">候选栏数量始终等于谜面长度</span>
+        </div>
+        <label class="switch">
+          <input type="checkbox" id="followToggle" checked aria-label="候选栏数量跟随谜面长度">
+        </label>
+      </div>
+
+      <div class="field">
+        <div class="field-main">
+          <span class="field-label">允许重复</span>
+          <span class="field-hint">谜底里可以出现相同的 emoji</span>
+        </div>
+        <label class="switch">
+          <input type="checkbox" id="dupToggle" aria-label="允许谜底出现重复的 emoji">
+        </label>
+      </div>
+
+      <div class="field">
+        <div class="field-main">
+          <span class="field-label">选满自动判定</span>
+          <span class="field-hint">选满后立刻判定，不用手动点</span>
+        </div>
+        <label class="switch">
+          <input type="checkbox" id="autoToggle" checked aria-label="选满后自动判定">
+        </label>
+      </div>
+    </div>
+
+    <p class="settings-warning" id="settingsWarning" hidden></p>
+
+    <div class="modal-actions">
+      <button type="button" id="settingsCancelBtn">取消</button>
+      <button type="button" id="applySettingsBtn" class="primary">应用并重开</button>
+    </div>
+  </div>
+</div>
 
 <!-- ============ 记分牌 ============ -->
 <div class="modal" id="scoreboard" hidden>

@@ -103,23 +103,33 @@
   }
 
   function syncSettingsUI() {
-    var following = state.followSize;
     dom.sizeInput.value = String(game.size);
-    dom.followToggle.checked = following;
+    dom.followToggle.checked = state.followSize;
     dom.candInput.value = String(game.candidateCount);
+    dom.dupToggle.checked = game.allowDuplicates;
+    dom.autoToggle.checked = state.autoSubmit;
+    dom.difficultyText.textContent = game.size + ' 位 · ' + game.candidateCount + ' 候选 · ' +
+      (game.allowDuplicates ? '可重复' : '不重复');
+    syncSettingsPreview();
+  }
+
+  /** 设置弹窗内控件的即时联动（此时改动还没应用到游戏） */
+  function syncSettingsPreview() {
+    var following = dom.followToggle.checked;
     dom.candInput.disabled = following;
     dom.candMinus.disabled = following;
     dom.candPlus.disabled = following;
     dom.candStepper.classList.toggle('is-locked', following);
-    dom.dupToggle.checked = game.allowDuplicates;
-    dom.autoToggle.checked = state.autoSubmit;
+    if (following) dom.candInput.value = String(Core.clampSize(dom.sizeInput.value));
   }
 
   /* ================= 渲染：槽位 ================= */
 
   function renderBoard(popIndex) {
     var reveal = game.won;
-    var values = reveal ? game.answer : game.selection;
+    var values = reveal
+      ? game.answer
+      : game.slots.map(function (slot) { return slot ? slot.char : null; });
 
     dom.board.innerHTML = '';
 
@@ -129,23 +139,40 @@
       cell.setAttribute('role', 'listitem');
 
       if (values[i]) {
+        var locked = !reveal && game.isLocked(i);
         cell.classList.add('filled');
         cell.textContent = values[i];
+
         if (reveal) {
           cell.classList.add('solved', 'wave');
           cell.style.animationDelay = (i * 0.06).toFixed(2) + 's';
           cell.title = Pool.nameOf(values[i]);
         } else {
-          cell.title = Pool.nameOf(values[i]) + '（点击移除）';
+          cell.classList.add('clickable');
           cell.tabIndex = 0;
-          cell.setAttribute('aria-label', '第 ' + (i + 1) + ' 位 ' + Pool.nameOf(values[i]) + '，按回车移除');
+          cell.setAttribute('aria-pressed', locked ? 'true' : 'false');
+
+          if (locked) {
+            cell.classList.add('locked');
+            cell.title = '第 ' + (i + 1) + ' 位 ' + Pool.nameOf(values[i]) + ' · 已锁定（点击解锁）';
+            cell.setAttribute('aria-label', '第 ' + (i + 1) + ' 位 ' + Pool.nameOf(values[i]) + '，已锁定，按回车解锁');
+            var lockMark = document.createElement('span');
+            lockMark.className = 'slot-lock';
+            lockMark.setAttribute('aria-hidden', 'true');
+            lockMark.textContent = '🔒';
+            cell.appendChild(lockMark);
+          } else {
+            cell.title = '第 ' + (i + 1) + ' 位 ' + Pool.nameOf(values[i]) + '（点击锁定）';
+            cell.setAttribute('aria-label', '第 ' + (i + 1) + ' 位 ' + Pool.nameOf(values[i]) + '，未锁定，按回车锁定');
+          }
+
           (function (index) {
-            var remove = function () { removeAt(index); };
-            cell.addEventListener('click', remove);
+            var toggle = function () { toggleLockAt(index); };
+            cell.addEventListener('click', toggle);
             cell.addEventListener('keydown', function (event) {
               if (event.key === 'Enter' || event.key === ' ') {
                 event.preventDefault();
-                remove();
+                toggle();
               }
             });
           })(i);
@@ -271,13 +298,19 @@
 
   function renderHud() {
     var elapsed = game.finishedAt ? game.finishedAt - game.startedAt : Date.now() - game.startedAt;
+    var locked = game.lockedCount();
+
     dom.attemptCount.textContent = String(game.attempts);
     dom.timer.textContent = Core.formatDuration(elapsed);
-    dom.selCount.textContent = String(game.selection.length);
+    dom.selCount.textContent = String(game.filledCount());
     dom.sizeLabel.textContent = String(game.size);
+
+    dom.lockCount.textContent = String(locked);
+    dom.lockItem.hidden = locked === 0;
+
     dom.submitBtn.disabled = game.won || !game.isFull();
-    dom.undoBtn.disabled = game.won || game.selection.length === 0;
-    dom.clearBtn.disabled = game.won || game.selection.length === 0;
+    dom.undoBtn.disabled = game.won || !game.hasRemovable();
+    dom.clearBtn.disabled = game.won || !game.hasRemovable();
   }
 
   function renderModeTip() {
@@ -293,9 +326,9 @@
     }
 
     if (game.size <= 6) {
-      hint = '点一下加入，点格子里的可以移除';
+      hint = '点一下加入，点已选槽位可以 🔒 锁定';
     } else {
-      hint = '选 ' + game.size + ' 个：点一下加入，点格子里的可以移除';
+      hint = '要选 ' + game.size + ' 个：点一下加入，点已选槽位可以 🔒 锁定';
     }
 
     dom.modeTip.textContent = text;
@@ -333,7 +366,9 @@
     if (!result.ok) {
       restartAnimation(btn, 'shake');
       if (result.reason === 'full') {
-        toast('已经选满 ' + game.size + ' 个啦，先撤销或清空');
+        toast(game.lockedCount() === game.size
+          ? '所有位置都锁定了 🔒，先点槽位解锁再改'
+          : '已经选满 ' + game.size + ' 个啦，先撤销或清除');
       } else if (result.reason === 'duplicate') {
         toast('当前是「不允许重复」模式，' + Pool.nameOf(char) + ' 已经选过了');
       } else {
@@ -343,18 +378,28 @@
     }
 
     restartAnimation(btn, 'tap');
-    renderBoard(game.selection.length - 1);
+    renderBoard(result.index);
     renderHud();
     updatePool();
     maybeAutoSubmit();
   }
 
-  function removeAt(index) {
+  /** 点槽位 = 锁定 / 解锁（锁定的位置不会被撤销、清除、判定清掉） */
+  function toggleLockAt(index) {
     cancelAutoSubmit();
-    if (game.removeAt(index)) {
-      renderBoard();
-      renderHud();
-      updatePool();
+    var result = game.toggleLock(index);
+    if (!result) return;
+
+    renderBoard();
+    renderHud();
+    updatePool();
+
+    var slot = game.slots[index];
+    if (result === 'locked') {
+      toast('🔒 已锁定第 ' + (index + 1) + ' 位：' + Pool.nameOf(slot.char) +
+        '（撤销、清除、判定都不会动它）');
+    } else {
+      toast('已解锁第 ' + (index + 1) + ' 位：' + Pool.nameOf(slot.char));
     }
   }
 
@@ -364,6 +409,8 @@
       renderBoard();
       renderHud();
       updatePool();
+    } else if (game.lockedCount() > 0) {
+      toast('🔒 锁定的 emoji 不会被撤销，点槽位可以解锁');
     } else {
       toast('还没有可以撤销的 emoji');
     }
@@ -371,11 +418,16 @@
 
   function clearSelection() {
     cancelAutoSubmit();
+    var locked = game.lockedCount();
     if (game.clearSelection()) {
       renderBoard();
       renderHud();
       updatePool();
-      toast('已清除全部已选 emoji');
+      toast(locked > 0
+        ? '已清除未锁定的 emoji，保留 ' + locked + ' 个锁定项 🔒'
+        : '已清除全部已选 emoji');
+    } else if (locked > 0) {
+      toast('🔒 锁定的 emoji 不会被清除，点槽位可以解锁');
     } else {
       toast('当前没有已选的 emoji');
     }
@@ -383,7 +435,7 @@
 
   function maybeAutoSubmit() {
     cancelAutoSubmit();
-    if (!state.autoSubmit || game.won || !game.isFull()) return;
+    if (!state.autoSubmit || game.won || !game.canAutoSubmit()) return;
     autoTimerId = window.setTimeout(function () {
       autoTimerId = null;
       submitGuess();
@@ -399,7 +451,7 @@
     cancelAutoSubmit();
     if (game.won) return;
     if (!game.isFull()) {
-      toast('还要再选 ' + (game.size - game.selection.length) + ' 个 emoji');
+      toast('还要再选 ' + (game.size - game.filledCount()) + ' 个 emoji');
       return;
     }
     var record = game.submit();
@@ -412,12 +464,18 @@
 
     if (game.won) {
       onWin();
-    } else if (record.exact === 0 && record.misplaced === 0) {
+      return;
+    }
+
+    var keptMsg = record.keptLocked > 0 ? '；锁定的 ' + record.keptLocked + ' 个已保留 🔒' : '';
+    if (record.exact === 0 && record.misplaced === 0) {
       flashBoard('shake-board');
-      toast('一个都没沾上，换个思路 🤔');
+      toast('一个都没沾上，换个思路 🤔' + keptMsg);
     } else if (record.misplaced === 0 && record.exact > 0) {
       flashBoard('pulse-board');
-      toast('位置全对的有 ' + record.exact + ' 个，继续缩小范围');
+      toast('位置全对的有 ' + record.exact + ' 个，继续缩小范围' + keptMsg);
+    } else if (record.keptLocked > 0) {
+      toast('锁定的 ' + record.keptLocked + ' 个已保留 🔒，继续调整其余位置');
     }
   }
 
@@ -478,6 +536,7 @@
 
   function onWin() {
     stopTimer();
+    if (!dom.settingsModal.hidden) closeSettings(true);
     renderBoard();
 
     var stats = game.stats();
@@ -534,17 +593,17 @@
 
     dom.scoreboard.hidden = false;
     dom.scoreboard.classList.remove('closing');
-    document.body.classList.add('modal-open');
+    syncBodyLock();
     dom.playAgainBtn.focus();
   }
 
   function closeScoreboard(immediate) {
     if (dom.scoreboard.hidden) return;
-    document.body.classList.remove('modal-open');
 
     if (immediate || reducedMotion()) {
       dom.scoreboard.hidden = true;
       dom.scoreboard.classList.remove('closing');
+      syncBodyLock();
       return;
     }
 
@@ -552,7 +611,58 @@
     window.setTimeout(function () {
       dom.scoreboard.hidden = true;
       dom.scoreboard.classList.remove('closing');
+      syncBodyLock();
     }, 190);
+  }
+
+  /* ================= 设置弹窗 ================= */
+
+  /** 只要有任意弹窗打开就锁住页面滚动 */
+  function syncBodyLock() {
+    var anyOpen = !dom.scoreboard.hidden || !dom.settingsModal.hidden;
+    document.body.classList.toggle('modal-open', anyOpen);
+  }
+
+  function openSettings() {
+    syncSettingsUI();
+
+    var progress = hasProgress();
+    dom.settingsWarning.hidden = !progress;
+    if (progress) {
+      dom.settingsWarning.textContent = '本局已经猜了 ' + game.attempts +
+        ' 次，应用新难度会重新开局并清空记录框。';
+    }
+
+    dom.settingsModal.hidden = false;
+    dom.settingsModal.classList.remove('closing');
+    syncBodyLock();
+    dom.sizeInput.focus();
+  }
+
+  function closeSettings(immediate) {
+    if (dom.settingsModal.hidden) return;
+    syncSettingsUI(); // 丢弃没有应用的改动
+
+    if (immediate || reducedMotion()) {
+      dom.settingsModal.hidden = true;
+      dom.settingsModal.classList.remove('closing');
+      syncBodyLock();
+      return;
+    }
+
+    dom.settingsModal.classList.add('closing');
+    window.setTimeout(function () {
+      dom.settingsModal.hidden = true;
+      dom.settingsModal.classList.remove('closing');
+      syncBodyLock();
+    }, 190);
+  }
+
+  function applySettingsFromModal() {
+    commitSettings({ force: true, silent: true });
+    closeSettings(true);
+    toast('设置已应用：' + game.size + ' 位 · ' + game.candidateCount + ' 候选 · ' +
+      (game.allowDuplicates ? '允许重复' : '不重复'));
   }
 
   function buildResultText(stats) {
@@ -604,6 +714,7 @@
     cancelAutoSubmit();
     game.reset(overrides);
     closeScoreboard(true);
+    if (!dom.settingsModal.hidden) closeSettings(true);
     dom.confetti.textContent = '';
     rebuildPool();
     renderRecords();
@@ -667,8 +778,10 @@
         candidateCount: state.candidateCount,
         allowDuplicates: state.allowDuplicates
       });
-      toast('已按新难度开局：' + game.size + ' 位 · ' + game.candidateCount + ' 候选 · ' +
-        (game.allowDuplicates ? '允许重复' : '不重复'));
+      if (!opts.silent) {
+        toast('已按新难度开局：' + game.size + ' 位 · ' + game.candidateCount + ' 候选 · ' +
+          (game.allowDuplicates ? '允许重复' : '不重复'));
+      }
     } else {
       syncSettingsUI();
       if (opts.toastMessage) toast(opts.toastMessage);
@@ -676,48 +789,55 @@
     }
   }
 
+  /** 只改输入框里的数字，是否生效由「应用并重开」决定 */
   function stepNumber(input, delta) {
     input.value = String(Math.floor(Number(input.value) || 0) + delta);
-    commitSettings();
+  }
+
+  function normalizeSizeInput() {
+    dom.sizeInput.value = String(Core.clampSize(dom.sizeInput.value));
+    syncSettingsPreview();
+  }
+
+  function normalizeCandInput() {
+    var size = Core.clampSize(dom.sizeInput.value);
+    dom.candInput.value = String(Core.clampCandidateCount(dom.candInput.value, size, Pool.chars.length));
   }
 
   /* ================= 事件绑定 ================= */
 
   function bindEvents() {
-    dom.sizeInput.addEventListener('change', function () { commitSettings(); });
+    /* ---- 设置弹窗 ---- */
+    dom.settingsOpenBtn.addEventListener('click', function () { openSettings(); });
+    dom.difficultyChip.addEventListener('click', function () { openSettings(); });
+    dom.settingsCancelBtn.addEventListener('click', function () { closeSettings(); });
+    dom.applySettingsBtn.addEventListener('click', applySettingsFromModal);
+    dom.settingsModal.addEventListener('click', function (event) {
+      if (event.target === dom.settingsModal) closeSettings();
+    });
+
+    dom.sizeInput.addEventListener('change', normalizeSizeInput);
     dom.sizeInput.addEventListener('keydown', function (event) {
       if (event.key === 'Enter') {
         event.preventDefault();
-        commitSettings();
-        dom.sizeInput.blur();
+        applySettingsFromModal();
       }
     });
-    dom.sizeMinus.addEventListener('click', function () { stepNumber(dom.sizeInput, -1); });
-    dom.sizePlus.addEventListener('click', function () { stepNumber(dom.sizeInput, 1); });
+    dom.sizeMinus.addEventListener('click', function () { stepNumber(dom.sizeInput, -1); normalizeSizeInput(); });
+    dom.sizePlus.addEventListener('click', function () { stepNumber(dom.sizeInput, 1); normalizeSizeInput(); });
 
-    dom.candInput.addEventListener('change', function () { commitSettings(); });
+    dom.candInput.addEventListener('change', normalizeCandInput);
     dom.candInput.addEventListener('keydown', function (event) {
       if (event.key === 'Enter') {
         event.preventDefault();
-        commitSettings();
-        dom.candInput.blur();
+        applySettingsFromModal();
       }
     });
-    dom.candMinus.addEventListener('click', function () { stepNumber(dom.candInput, -1); });
-    dom.candPlus.addEventListener('click', function () { stepNumber(dom.candInput, 1); });
-    dom.followToggle.addEventListener('change', function () { commitSettings(); });
+    dom.candMinus.addEventListener('click', function () { stepNumber(dom.candInput, -1); normalizeCandInput(); });
+    dom.candPlus.addEventListener('click', function () { stepNumber(dom.candInput, 1); normalizeCandInput(); });
+    dom.followToggle.addEventListener('change', syncSettingsPreview);
 
-    dom.dupToggle.addEventListener('change', function () { commitSettings(); });
-    dom.autoToggle.addEventListener('change', function () {
-      commitSettings({
-        toastMessage: dom.autoToggle.checked ? '已开启：选满自动判定' : '已关闭：需手动点「判定」'
-      });
-    });
-    dom.applySizeBtn.addEventListener('click', function () {
-      commitSettings({ force: true });
-      toast('设置已应用：' + game.size + ' 位 · ' + game.candidateCount + ' 候选 · ' +
-        (game.allowDuplicates ? '允许重复' : '不重复'));
-    });
+    /* ---- 游戏操作 ---- */
     dom.newGameBtn.addEventListener('click', function () { newGame(); });
 
     dom.undoBtn.addEventListener('click', undoOne);
@@ -751,7 +871,9 @@
       var inField = tag === 'INPUT' || tag === 'TEXTAREA' || target.isContentEditable;
 
       if (event.key === 'Escape') {
-        if (!dom.scoreboard.hidden) {
+        if (!dom.settingsModal.hidden) {
+          closeSettings();
+        } else if (!dom.scoreboard.hidden) {
           closeScoreboard();
         } else if (inField) {
           target.blur();
@@ -760,14 +882,7 @@
         }
         return;
       }
-      if (inField) {
-        if (event.key === 'Enter' && (target === dom.sizeInput || target === dom.candInput)) {
-          event.preventDefault();
-          commitSettings();
-          target.blur();
-        }
-        return;
-      }
+      if (inField) return;
       if (event.key === 'Backspace') {
         event.preventDefault();
         undoOne();
@@ -788,6 +903,8 @@
     dom.timer = $('timer');
     dom.selCount = $('selCount');
     dom.sizeLabel = $('sizeLabel');
+    dom.lockItem = $('lockItem');
+    dom.lockCount = $('lockCount');
     dom.modeTip = $('modeTip');
     dom.poolHint = $('poolHint');
     dom.submitBtn = $('submitBtn');
@@ -803,7 +920,13 @@
     dom.followToggle = $('followToggle');
     dom.dupToggle = $('dupToggle');
     dom.autoToggle = $('autoToggle');
-    dom.applySizeBtn = $('applySizeBtn');
+    dom.difficultyChip = $('difficultyChip');
+    dom.difficultyText = $('difficultyText');
+    dom.settingsOpenBtn = $('settingsOpenBtn');
+    dom.settingsModal = $('settingsModal');
+    dom.settingsCancelBtn = $('settingsCancelBtn');
+    dom.applySettingsBtn = $('applySettingsBtn');
+    dom.settingsWarning = $('settingsWarning');
     dom.newGameBtn = $('newGameBtn');
     dom.clearRecordsBtn = $('clearRecordsBtn');
     dom.confetti = $('confetti');
